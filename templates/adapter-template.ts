@@ -11,14 +11,14 @@
  * // Customize rules for Stripe API
  */
 
-import { BaseTypeExtractor } from '../core/extractor';
+import { BaseTypeExtractor } from '../core/extractor.js';
 import type { 
   ExtractedType, 
   ExtractionRules,
   PropertyInfo,
   TypeTransform,
   ValidationResult
-} from '../core/types';
+} from '../core/types.js';
 import * as ts from 'typescript';
 
 /**

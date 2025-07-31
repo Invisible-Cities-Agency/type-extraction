@@ -9,10 +9,10 @@
  */
 
 // Core exports
-export * from './core/types';
-export { BaseTypeExtractor } from './core/extractor';
-export { TypeGenerator } from './core/generator';
-export * from './core/config';
+export * from './core/types.js';
+export { BaseTypeExtractor } from './core/extractor.js';
+export { TypeGenerator } from './core/generator.js';
+export * from './core/config.js';
 
 // Re-export types for convenience
 export type {
@@ -24,9 +24,9 @@ export type {
   DiscriminatorConfig,
   ValidationResult,
   OutputConfig
-} from './core/types';
+} from './core/types.js';
 
-export type { TypeExtractionConfig } from './core/config';
+export type { TypeExtractionConfig } from './core/config.js';
 
 // Version
 export const VERSION = '1.0.0';

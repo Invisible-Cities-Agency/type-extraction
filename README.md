@@ -8,6 +8,7 @@ This framework solves a common problem: many third-party APIs (like Guesty, Stri
 
 ### Key Features
 
+- **ESM-first** - Built for modern React 19 and Next.js projects
 - **AST-based extraction** - Uses TypeScript Compiler API for accurate parsing
 - **Handles complex types** - Nested objects, generics, unions, intersections
 - **API-specific adapters** - Extensible architecture for different APIs

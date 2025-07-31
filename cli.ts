@@ -16,10 +16,10 @@ import { existsSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { glob } from 'glob';
-import { loadConfigFile, resolveConfig, createOutputConfig } from './core/config';
-import { TypeGenerator } from './core/generator';
-import type { ExtractionContext } from './core/types';
-import type { TypeExtractionConfig } from './core/config';
+import { loadConfigFile, resolveConfig, createOutputConfig } from './core/config.js';
+import { TypeGenerator } from './core/generator.js';
+import type { ExtractionContext } from './core/types.js';
+import type { TypeExtractionConfig } from './core/config.js';
 
 // For ESM compatibility
 const __filename = fileURLToPath(import.meta.url);

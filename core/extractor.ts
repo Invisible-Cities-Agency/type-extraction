@@ -20,7 +20,7 @@ import type {
   PropertyInfo,
   ExtractionError,
   ExtractionMetrics
-} from './types';
+} from './types.js';
 
 /**
  * @class BaseTypeExtractor

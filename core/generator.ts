@@ -17,7 +17,7 @@ import type {
   ExtractionContext,
   OutputConfig,
   PropertyInfo
-} from './types';
+} from './types.js';
 
 /**
  * @class TypeGenerator
@@ -201,14 +201,14 @@ export class TypeGenerator {
       // Export from individual files
       for (const [name, type] of context.types) {
         if (type.isExported) {
-          content += `export * from './${name}';\n`;
+          content += `export * from './${name}.js';\n`;
         }
       }
     } else {
       // Re-export from unified file
       const fileName = this.config.filePattern.replace('{api}', context.rules.apiId);
       const moduleName = fileName.replace('.ts', '');
-      content += `export * from './${moduleName}';\n`;
+      content += `export * from './${moduleName}.js';\n`;
     }
 
     writeFileSync(indexPath, content, 'utf-8');

@@ -10,7 +10,7 @@
  */
 
 import { resolve } from 'node:path';
-import type { ExtractionRules, OutputConfig } from './types';
+import type { ExtractionRules, OutputConfig } from './types.js';
 
 /**
  * @interface TypeExtractionConfig
