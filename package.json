@@ -1,0 +1,74 @@
+{
+  "name": "@invisiblecities/type-extraction",
+  "version": "1.0.0",
+  "description": "TypeScript type extraction framework for third-party APIs using AST parsing",
+  "keywords": [
+    "typescript",
+    "types",
+    "extraction",
+    "ast",
+    "api",
+    "code-generation",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/invisiblecities/type-extraction",
+  "bugs": {
+    "url": "https://github.com/invisiblecities/type-extraction/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/invisiblecities/type-extraction.git"
+  },
+  "license": "MIT",
+  "author": "Invisible Cities",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    },
+    "./adapters/*": {
+      "types": "./dist/adapters/*.d.ts",
+      "import": "./dist/adapters/*.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "type-extract": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "test": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "glob": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
