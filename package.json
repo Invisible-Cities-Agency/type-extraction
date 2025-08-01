@@ -1,6 +1,6 @@
 {
   "name": "@invisiblecities/type-extraction",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "TypeScript type extraction framework for third-party APIs using AST parsing",
   "keywords": [
     "typescript",
@@ -55,7 +55,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "glob": "^11.0.0"
+    "@types/glob": "^8.1.0",
+    "glob": "^11.0.3",
+    "ts-morph": "^23.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

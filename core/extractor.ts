@@ -3,15 +3,14 @@
  * 
  * @description
  * Provides an abstract base class for extracting TypeScript type definitions
- * from source code using the TypeScript Compiler API. This ensures accurate
- * parsing of complex types including nested objects, generics, and unions.
+ * from source code using ts-morph for AST manipulation. This ensures accurate
+ * parsing of complex types and compliance with RFC-2025-TS-A01.
  * 
  * @module @invisiblecities/type-extraction/core
- * @since 1.0.0
+ * @since 2.0.0
  */
 
-import * as ts from 'typescript';
-import { readFileSync } from 'node:fs';
+import { Project, SourceFile, Node, InterfaceDeclaration, TypeAliasDeclaration, EnumDeclaration, ClassDeclaration, PropertySignature, JSDocableNode, Type, ScriptTarget, ModuleKind } from 'ts-morph';
 import { resolve } from 'node:path';
 import type {
   ExtractedType,
@@ -19,13 +18,14 @@ import type {
   ExtractionRules,
   PropertyInfo,
   ExtractionError,
-  ExtractionMetrics
+  ExtractionMetrics,
+  BrandedUnknown
 } from './types.js';
 
 /**
  * @class BaseTypeExtractor
  * @abstract
- * @description Base class for API-specific type extractors
+ * @description Base class for API-specific type extractors using ts-morph
  * 
  * @example
  * class MyAPIExtractor extends BaseTypeExtractor {
@@ -38,12 +38,11 @@ import type {
  *   }
  * }
  * 
- * @since 1.0.0
+ * @since 2.0.0
  */
 export abstract class BaseTypeExtractor {
   protected context: ExtractionContext;
-  protected program: ts.Program | null = null;
-  protected typeChecker: ts.TypeChecker | null = null;
+  protected project: Project;
 
   constructor(rules: ExtractionRules) {
     this.context = {
@@ -56,10 +55,25 @@ export abstract class BaseTypeExtractor {
         typesExtracted: 0,
         transformsApplied: 0,
         validationsPassed: 0,
-        validationsFailed: 0
+        validationsFailed: 0,
+        anyTypeViolations: 0
       },
       errors: []
     };
+
+    // Initialize ts-morph project
+    this.project = new Project({
+      compilerOptions: {
+        target: ScriptTarget.ES2022,
+        module: ModuleKind.ESNext,
+        lib: ["es2022"],
+        allowJs: false,
+        skipLibCheck: true,
+        strict: true,
+        esModuleInterop: true,
+        resolveJsonModule: true
+      }
+    });
   }
 
   /**
@@ -81,12 +95,14 @@ export abstract class BaseTypeExtractor {
     this.context.sourceFiles = sourceFiles;
     
     try {
-      // Create TypeScript program
-      this.createProgram(sourceFiles);
+      // Add source files to project
+      for (const file of sourceFiles) {
+        this.project.addSourceFileAtPath(file);
+      }
       
       // Parse each source file
-      for (const file of sourceFiles) {
-        await this.parseFile(file);
+      for (const sourceFile of this.project.getSourceFiles()) {
+        await this.parseFile(sourceFile);
       }
       
       // Apply API-specific transformations
@@ -94,6 +110,9 @@ export abstract class BaseTypeExtractor {
       
       // Validate extracted types
       await this.validateTypes();
+      
+      // Check for any type violations
+      this.detectAnyTypes();
       
     } catch (error) {
       this.addError('', `Extraction failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -103,101 +122,91 @@ export abstract class BaseTypeExtractor {
   }
 
   /**
-   * @method createProgram
-   * @description Creates a TypeScript program for AST parsing
-   * @param {string[]} sourceFiles - Source files to include in the program
-   * @protected
-   * @throws {Error} If program creation fails
-   */
-  protected createProgram(sourceFiles: string[]): void {
-    const options: ts.CompilerOptions = {
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.ESNext,
-      lib: ['es2022'],
-      allowJs: false,
-      skipLibCheck: true,
-      strict: true,
-      esModuleInterop: true,
-      resolveJsonModule: true
-    };
-
-    this.program = ts.createProgram(sourceFiles, options);
-    this.typeChecker = this.program.getTypeChecker();
-  }
-
-  /**
    * Parse a single source file
    */
-  protected async parseFile(filePath: string): Promise<void> {
-    if (!this.program) {
-      throw new Error('TypeScript program not initialized');
-    }
-
-    const sourceFile = this.program.getSourceFile(filePath);
-    if (!sourceFile) {
-      this.addError(filePath, 'Failed to parse source file');
-      return;
-    }
-
+  protected async parseFile(sourceFile: SourceFile): Promise<void> {
     this.context.metrics.filesParsed++;
     
-    // Visit all nodes in the AST
-    ts.forEachChild(sourceFile, (node) => {
-      this.visitNode(node, sourceFile);
-    });
-  }
-
-  /**
-   * @method visitNode
-   * @description Recursively visits AST nodes to extract type definitions
-   * @param {ts.Node} node - Current AST node
-   * @param {ts.SourceFile} sourceFile - Source file containing the node
-   * @protected
-   */
-  protected visitNode(node: ts.Node, sourceFile: ts.SourceFile): void {
     // Extract interfaces
-    if (ts.isInterfaceDeclaration(node)) {
-      this.extractInterface(node, sourceFile);
+    for (const interfaceDecl of sourceFile.getInterfaces()) {
+      this.extractInterface(interfaceDecl);
     }
     
     // Extract type aliases
-    else if (ts.isTypeAliasDeclaration(node)) {
-      this.extractTypeAlias(node, sourceFile);
+    for (const typeAlias of sourceFile.getTypeAliases()) {
+      this.extractTypeAlias(typeAlias);
     }
     
     // Extract enums
-    else if (ts.isEnumDeclaration(node)) {
-      this.extractEnum(node, sourceFile);
+    for (const enumDecl of sourceFile.getEnums()) {
+      this.extractEnum(enumDecl);
     }
     
     // Extract classes (if needed)
-    else if (ts.isClassDeclaration(node) && this.shouldExtractClass(node)) {
-      this.extractClass(node, sourceFile);
+    for (const classDecl of sourceFile.getClasses()) {
+      if (this.shouldExtractClass(classDecl)) {
+        this.extractClass(classDecl);
+      }
+    }
+  }
+
+  /**
+   * @method detectAnyTypes
+   * @description Detects 'any' types in extracted types and fails extraction if found
+   * @protected
+   */
+  protected detectAnyTypes(): void {
+    for (const [name, extractedType] of this.context.types) {
+      const anyOccurrences = this.findAnyInDefinition(extractedType.definition);
+      
+      if (anyOccurrences.length > 0) {
+        this.context.metrics.anyTypeViolations++;
+        
+        for (const occurrence of anyOccurrences) {
+          this.addError(
+            extractedType.sourceFile,
+            `Type '${name}' contains 'any' type: ${occurrence.context}. Use a specific type or branded unknown instead.`,
+            'any-type-violation',
+            occurrence.line,
+            occurrence.column
+          );
+        }
+        
+        // Fail the extraction
+        throw new Error(`Extraction failed: ${anyOccurrences.length} 'any' type violations found. See errors for details.`);
+      }
+    }
+  }
+
+  /**
+   * Find 'any' types in a definition string
+   */
+  protected findAnyInDefinition(definition: string): Array<{ context: string; line?: number; column?: number }> {
+    const occurrences: Array<{ context: string; line?: number; column?: number }> = [];
+    
+    // Regex to find 'any' as a type (not part of a word)
+    const anyRegex = /\b(any)\b(?![\w])/g;
+    let match;
+    
+    while ((match = anyRegex.exec(definition)) !== null) {
+      const startIndex = Math.max(0, match.index - 20);
+      const endIndex = Math.min(definition.length, match.index + 20);
+      const context = definition.substring(startIndex, endIndex);
+      
+      occurrences.push({ context });
     }
     
-    // Recursively visit child nodes
-    ts.forEachChild(node, (child) => this.visitNode(child, sourceFile));
+    return occurrences;
   }
 
   /**
    * @method extractInterface
    * @description Extracts interface declaration with all properties and metadata
-   * @param {ts.InterfaceDeclaration} node - Interface AST node
-   * @param {ts.SourceFile} sourceFile - Source file
+   * @param {InterfaceDeclaration} node - Interface declaration node
    * @protected
-   * 
-   * @example
-   * // Extracts:
-   * interface User {
-   *   id: string;
-   *   profile: {
-   *     name: string;
-   *     settings: { theme: string };
-   *   };
-   * }
    */
-  protected extractInterface(node: ts.InterfaceDeclaration, sourceFile: ts.SourceFile): void {
-    const name = node.name?.getText() || 'Anonymous';
+  protected extractInterface(node: InterfaceDeclaration): void {
+    const name = node.getName();
     
     // Skip if excluded
     if (this.context.rules.excludeTypes?.includes(name)) {
@@ -207,14 +216,17 @@ export abstract class BaseTypeExtractor {
     const extractedType: ExtractedType = {
       name,
       kind: 'interface',
-      definition: this.getNodeText(node, sourceFile),
-      sourceFile: sourceFile.fileName,
-      location: this.getNodeLocation(node, sourceFile),
-      isExported: this.isNodeExported(node),
+      definition: node.getFullText(),
+      sourceFile: node.getSourceFile().getFilePath(),
+      location: {
+        line: node.getStartLineNumber(),
+        column: node.getStartLinePos()
+      },
+      isExported: node.isExported(),
       documentation: this.getJSDoc(node),
       properties: this.extractProperties(node),
-      typeParameters: this.extractTypeParameters(node),
-      extends: this.extractExtends(node),
+      typeParameters: node.getTypeParameters().map(tp => tp.getName()),
+      extends: node.getExtends().map(ext => ext.getText()),
       astNode: node
     };
 
@@ -225,160 +237,86 @@ export abstract class BaseTypeExtractor {
   /**
    * Extract properties from interface
    */
-  protected extractProperties(node: ts.InterfaceDeclaration): PropertyInfo[] {
+  protected extractProperties(node: InterfaceDeclaration): PropertyInfo[] {
     const properties: PropertyInfo[] = [];
     
-    for (const member of node.members) {
-      if (ts.isPropertySignature(member)) {
-        const prop: PropertyInfo = {
-          name: member.name?.getText() || '',
-          type: this.getPropertyType(member),
-          optional: !!member.questionToken,
-          readonly: !!member.modifiers?.some(m => m.kind === ts.SyntaxKind.ReadonlyKeyword),
-          documentation: this.getJSDoc(member)
-        };
-        properties.push(prop);
-      }
+    for (const prop of node.getProperties()) {
+      const propInfo: PropertyInfo = {
+        name: prop.getName(),
+        type: this.getPropertyTypeString(prop),
+        optional: prop.hasQuestionToken(),
+        readonly: prop.isReadonly(),
+        documentation: this.getJSDoc(prop)
+      };
+      properties.push(propInfo);
     }
     
     return properties;
   }
 
   /**
-   * Get property type as string
+   * Get property type as string with 'any' to branded unknown conversion
    */
-  protected getPropertyType(member: ts.PropertySignature): string {
-    if (!member.type) return 'unknown';
+  protected getPropertyTypeString(prop: PropertySignature): string {
+    const typeNode = prop.getTypeNode();
     
-    // For complex types, we need to properly format them
-    return this.typeNodeToString(member.type);
+    if (!typeNode) {
+      return this.createBrandedUnknown('property', prop.getName());
+    }
+    
+    let typeString = typeNode.getText();
+    
+    // Convert 'any' to branded unknown
+    if (typeString === 'any') {
+      const propertyName = prop.getName();
+      const interfaceName = prop.getParent()?.getKindName() || 'unknown';
+      return this.createBrandedUnknown('property', `${interfaceName}.${propertyName}`);
+    }
+    
+    // Handle nested any types
+    typeString = this.replaceSenseAnyTypes(typeString, prop.getName());
+    
+    return typeString;
   }
 
   /**
-   * @method typeNodeToString
-   * @description Converts TypeScript AST TypeNode to string representation
-   * @param {ts.TypeNode} typeNode - Type node from AST
-   * @returns {string} String representation of the type
+   * @method createBrandedUnknown
+   * @description Creates a branded unknown type with context
+   * @param {string} context - Context for the unknown type
+   * @param {string} detail - Additional detail about where this unknown came from
+   * @returns {string} Branded unknown type string
    * @protected
-   * 
-   * @remarks
-   * Handles nested object types, arrays, unions, and other complex types.
-   * Converts 'any' to 'unknown' for type safety.
    */
-  protected typeNodeToString(typeNode: ts.TypeNode): string {
-    // This is a simplified version - in production, handle all type node kinds
-    switch (typeNode.kind) {
-      case ts.SyntaxKind.StringKeyword:
-        return 'string';
-      case ts.SyntaxKind.NumberKeyword:
-        return 'number';
-      case ts.SyntaxKind.BooleanKeyword:
-        return 'boolean';
-      case ts.SyntaxKind.AnyKeyword:
-        return 'unknown'; // Never use 'any'
-      case ts.SyntaxKind.UnknownKeyword:
-        return 'unknown';
-      case ts.SyntaxKind.TypeLiteral:
-        return this.typeLiteralToString(typeNode as ts.TypeLiteralNode);
-      case ts.SyntaxKind.ArrayType:
-        const arrayType = typeNode as ts.ArrayTypeNode;
-        return `${this.typeNodeToString(arrayType.elementType)}[]`;
-      case ts.SyntaxKind.UnionType:
-        const unionType = typeNode as ts.UnionTypeNode;
-        return unionType.types.map(t => this.typeNodeToString(t)).join(' | ');
-      default:
-        // For complex types, use the text representation
-        return typeNode.getText();
+  protected createBrandedUnknown(context: string, detail: string): string {
+    return `unknown & { readonly __brand: '${context}'; readonly __context: '${detail}' }`;
+  }
+
+  /**
+   * Replace any types in a type string with branded unknowns
+   */
+  protected replaceSenseAnyTypes(typeString: string, context: string): string {
+    // Replace standalone 'any' with branded unknown
+    return typeString.replace(/\bany\b/g, () => {
+      return this.createBrandedUnknown('replaced-any', context);
+    });
+  }
+
+  /**
+   * Get JSDoc comment from a node
+   */
+  protected getJSDoc(node: JSDocableNode): string | undefined {
+    const jsDocs = node.getJsDocs();
+    if (jsDocs.length > 0) {
+      return jsDocs[0].getDescription().trim();
     }
-  }
-
-  /**
-   * Convert type literal to string (for nested objects)
-   */
-  protected typeLiteralToString(node: ts.TypeLiteralNode): string {
-    const members: string[] = [];
-    
-    for (const member of node.members) {
-      if (ts.isPropertySignature(member)) {
-        const name = member.name?.getText() || '';
-        const optional = member.questionToken ? '?' : '';
-        const type = member.type ? this.typeNodeToString(member.type) : 'unknown';
-        members.push(`${name}${optional}: ${type}`);
-      }
-    }
-    
-    return `{ ${members.join('; ')} }`;
-  }
-
-  /**
-   * Get node text with proper formatting
-   */
-  protected getNodeText(node: ts.Node, sourceFile: ts.SourceFile): string {
-    const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
-    return printer.printNode(ts.EmitHint.Unspecified, node, sourceFile);
-  }
-
-  /**
-   * Get node location
-   */
-  protected getNodeLocation(node: ts.Node, sourceFile: ts.SourceFile): { line: number; column: number } {
-    const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-    return { line: line + 1, column: character + 1 };
-  }
-
-  /**
-   * Check if node is exported
-   */
-  protected isNodeExported(node: ts.Node): boolean {
-    if (!ts.canHaveModifiers(node)) return false;
-    const modifiers = ts.getModifiers(node);
-    return !!modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword);
-  }
-
-  /**
-   * Get JSDoc comment
-   */
-  protected getJSDoc(node: ts.Node): string | undefined {
-    const jsDocTags = ts.getJSDocTags(node);
-    const comments = ts.getLeadingCommentRanges(node.getSourceFile().text, node.pos);
-    
-    if (comments && comments.length > 0) {
-      const comment = comments[comments.length - 1];
-      const text = node.getSourceFile().text.substring(comment!.pos, comment!.end);
-      return text.replace(/^\/\*\*|\*\/$/g, '').replace(/^\s*\* ?/gm, '').trim();
-    }
-    
     return undefined;
-  }
-
-  /**
-   * Extract type parameters (generics)
-   */
-  protected extractTypeParameters(node: ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.ClassDeclaration): string[] {
-    if (!node.typeParameters) return [];
-    return node.typeParameters.map(p => p.name.getText());
-  }
-
-  /**
-   * Extract extends clause
-   */
-  protected extractExtends(node: ts.InterfaceDeclaration | ts.ClassDeclaration): string[] {
-    if (ts.isInterfaceDeclaration(node) && node.heritageClauses) {
-      const extendsClause = node.heritageClauses.find(
-        h => h.token === ts.SyntaxKind.ExtendsKeyword
-      );
-      if (extendsClause) {
-        return extendsClause.types.map(t => t.expression.getText());
-      }
-    }
-    return [];
   }
 
   /**
    * Extract type alias
    */
-  protected extractTypeAlias(node: ts.TypeAliasDeclaration, sourceFile: ts.SourceFile): void {
-    const name = node.name.getText();
+  protected extractTypeAlias(node: TypeAliasDeclaration): void {
+    const name = node.getName();
     
     if (this.context.rules.excludeTypes?.includes(name)) {
       return;
@@ -387,12 +325,15 @@ export abstract class BaseTypeExtractor {
     const extractedType: ExtractedType = {
       name,
       kind: 'type',
-      definition: this.getNodeText(node, sourceFile),
-      sourceFile: sourceFile.fileName,
-      location: this.getNodeLocation(node, sourceFile),
-      isExported: this.isNodeExported(node),
+      definition: node.getFullText(),
+      sourceFile: node.getSourceFile().getFilePath(),
+      location: {
+        line: node.getStartLineNumber(),
+        column: node.getStartLinePos()
+      },
+      isExported: node.isExported(),
       documentation: this.getJSDoc(node),
-      typeParameters: this.extractTypeParameters(node),
+      typeParameters: node.getTypeParameters().map(tp => tp.getName()),
       astNode: node
     };
 
@@ -403,8 +344,8 @@ export abstract class BaseTypeExtractor {
   /**
    * Extract enum
    */
-  protected extractEnum(node: ts.EnumDeclaration, sourceFile: ts.SourceFile): void {
-    const name = node.name?.getText() || 'Anonymous';
+  protected extractEnum(node: EnumDeclaration): void {
+    const name = node.getName();
     
     if (this.context.rules.excludeTypes?.includes(name)) {
       return;
@@ -413,10 +354,13 @@ export abstract class BaseTypeExtractor {
     const extractedType: ExtractedType = {
       name,
       kind: 'enum',
-      definition: this.getNodeText(node, sourceFile),
-      sourceFile: sourceFile.fileName,
-      location: this.getNodeLocation(node, sourceFile),
-      isExported: this.isNodeExported(node),
+      definition: node.getFullText(),
+      sourceFile: node.getSourceFile().getFilePath(),
+      location: {
+        line: node.getStartLineNumber(),
+        column: node.getStartLinePos()
+      },
+      isExported: node.isExported(),
       documentation: this.getJSDoc(node),
       astNode: node
     };
@@ -428,8 +372,8 @@ export abstract class BaseTypeExtractor {
   /**
    * Extract class (if needed)
    */
-  protected extractClass(node: ts.ClassDeclaration, sourceFile: ts.SourceFile): void {
-    const name = node.name?.getText() || 'Anonymous';
+  protected extractClass(node: ClassDeclaration): void {
+    const name = node.getName() || 'AnonymousClass';
     
     if (this.context.rules.excludeTypes?.includes(name)) {
       return;
@@ -438,13 +382,16 @@ export abstract class BaseTypeExtractor {
     const extractedType: ExtractedType = {
       name,
       kind: 'class',
-      definition: this.getNodeText(node, sourceFile),
-      sourceFile: sourceFile.fileName,
-      location: this.getNodeLocation(node, sourceFile),
-      isExported: this.isNodeExported(node),
+      definition: node.getFullText(),
+      sourceFile: node.getSourceFile().getFilePath(),
+      location: {
+        line: node.getStartLineNumber(),
+        column: node.getStartLinePos()
+      },
+      isExported: node.isExported(),
       documentation: this.getJSDoc(node),
-      typeParameters: this.extractTypeParameters(node),
-      extends: this.extractExtends(node),
+      typeParameters: node.getTypeParameters().map(tp => tp.getName()),
+      extends: node.getExtends() ? [node.getExtends()!.getText()] : undefined,
       astNode: node
     };
 
@@ -455,7 +402,7 @@ export abstract class BaseTypeExtractor {
   /**
    * Determine if class should be extracted
    */
-  protected shouldExtractClass(node: ts.ClassDeclaration): boolean {
+  protected shouldExtractClass(node: ClassDeclaration): boolean {
     // Override in subclasses for API-specific logic
     return false;
   }

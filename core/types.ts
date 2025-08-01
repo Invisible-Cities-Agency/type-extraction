@@ -4,7 +4,7 @@
  * @description
  * Defines the core interfaces and types for the extensible type extraction system.
  * This framework is designed to extract TypeScript types from third-party APIs that
- * don't provide official TypeScript clients.
+ * don't provide official TypeScript clients. Complies with RFC-2025-TS-A01.
  * 
  * @module @invisiblecities/type-extraction/core
  * @since 1.0.0
@@ -13,6 +13,14 @@
 // ============================================================================
 // Core Extraction Types
 // ============================================================================
+
+/**
+ * @type BrandedUnknown
+ * @description RFC-compliant branded unknown type with context
+ * @since 2.0.0
+ */
+export type BrandedUnknown<TBrand extends string = string, TContext extends string = string> = 
+  unknown & { readonly __brand: TBrand; readonly __context: TContext };
 
 /**
  * @interface ExtractedType
@@ -251,6 +259,7 @@ export interface ExtractionMetrics {
   transformsApplied: number;
   validationsPassed: number;
   validationsFailed: number;
+  anyTypeViolations: number;
 }
 
 /**
