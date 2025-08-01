@@ -19,7 +19,7 @@ import type {
   TypeTransform,
   ValidationResult
 } from '../core/types.js';
-import * as ts from 'typescript';
+import { ClassDeclaration } from 'ts-morph';
 
 /**
  * @class MyAPITypeExtractor
@@ -162,12 +162,12 @@ export class MyAPITypeExtractor extends BaseTypeExtractor {
   /**
    * @method shouldExtractClass
    * @description Determine if a class should be extracted
-   * @param {ts.ClassDeclaration} node - Class node
+   * @param {ClassDeclaration} node - Class node from ts-morph
    * @returns {boolean}
    * @protected
    */
-  protected override shouldExtractClass(node: ts.ClassDeclaration): boolean {
-    const className = node.name?.getText() || '';
+  protected override shouldExtractClass(node: ClassDeclaration): boolean {
+    const className = node.getName() || '';
     
     // Extract API client classes and service classes
     return className.includes('Client') || 
